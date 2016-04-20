@@ -1,11 +1,13 @@
 ---
 title: "MATH 216 Homework 3"
-author: "WRITE YOUR NAME HERE"
+author: Joy Wood
 output: html_document
 ---
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(knitr))
+
 suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(lubridate))
 suppressPackageStartupMessages(library(Quandl))
@@ -16,10 +18,11 @@ suppressPackageStartupMessages(library(Quandl))
 
 Please indicate
 
-* Who you collaborated with:
-* Roughly how much time you spent on this HW:
-* What gave you the most trouble:
-* Any comments you have: 
+* Who you collaborated with: - 
+* Roughly how much time you spent on this HW: 9 ~ 11
+* What gave you the most trouble: my regression was pretty dumb, should have stuck with using profile predictors. Didn't know how to find decision threshhold. Spend a lot of time perfecting silly things that probably don't matter. Some things prevented my rmd from knitting even though they ran fine in my console. Couldn't figure out how to get distinct weeks in lubridate so I refered to Christian's submission on github because I was getting truly desperate. I didn't/don't understand the proper way to measure and compare volatility of prices.
+
+* Any comments you have: cool data, so sorry to be submitting this so last minute. 
 
 
 ## Data
@@ -33,8 +36,13 @@ jukebox from Nov 30, 2003 to Jan 22, 2009 (included in `HW-3` folder).
 # DO NOT EDIT THIS SECTION!
 profiles <- read.csv("data/profiles.csv", header=TRUE) %>% 
   tbl_df()
+essays <- select(profiles, contains("essay"))
+profiles <- select(profiles, -contains("essay"))
+profiles <- mutate(profiles, is_female = ifelse(sex=="f", 1, 0))
+
 jukebox <- read.csv("data/jukebox.csv", header=TRUE) %>% 
   tbl_df()
+Quandl.api_key("JnieHx8tQ9uysSKshoKQ")
 ```
 
 
@@ -52,9 +60,74 @@ specifically the OkCupid dataset.
 Using your exploratory data analysis from HW-2, fit a logistic regression to
 predict individual's gender and interpret your results.
 
+
+I had a lot of fun exploring word queries in the OK cupid essay dataset. "Pilates" is a fun example. If a user mentions pilates, there is a 78.3% chance that the user is female, which is a far better predictor than our random coinflip value of 40%. I played around with similar words and calculated associated probabilities. 
+
 ```{r, echo=FALSE, fig.width=12, fig.height=6}
+find.query <- function(char.vector, query){
+  which.has.query <- grep(query, char.vector, ignore.case = TRUE)
+  length(which.has.query) != 0
+}
+profile.has.query <- function(data.frame, query){
+  query <- tolower(query)
+  has.query <- apply(data.frame, 1, find.query, query=query)
+  return(has.query)
+}
+
+profiles$has_pilates <- profile.has.query(data.frame = essays, query = "pilates")
+profiles$has_yoga <- profile.has.query(data.frame = essays, query = "yoga")
+profiles$has_wine <- profile.has.query(data.frame = essays, query = "wine")
+
+
+table_pilates <-group_by(profiles, has_pilates) %>% 
+  summarise(prop_female=mean(is_female))
+table_pilates[,-1] <-round(table_pilates[,-1],3)
+colnames(table_pilates) <- c("mentions pilates", "proportion female")
+kable(table_pilates,  align = 'c')
+
+table_yoga<-group_by(profiles, has_yoga) %>% 
+  summarise(prop_female=mean(is_female))
+table_yoga[,-1] <-round(table_yoga[,-1],3)
+colnames(table_yoga) <- c("mentions yoga", "proportion female")
+kable(table_yoga,  align = 'c')
+
+table_wine<-group_by(profiles, has_wine) %>% 
+  summarise(prop_female=mean(is_female))
+table_wine[,-1] <-round(table_wine[,-1],3)
+colnames(table_wine) <- c("mentions wine", "proportion female")
+kable(table_wine,  align = 'c')
+
+model_1 <- glm(is_female ~ has_pilates+has_yoga+has_wine, data=profiles, family=binomial)
+total_count <- sum(profiles$has_pilates | profiles$has_yoga | profiles$has_wine)
+wine_count <- sum(profiles$has_wine)
+
 
 ```
+
+The following table shows fitted values for a logistic regression using different word combinations. There are 12243 individuals who mention at least one of "wine", "pilates", and "yoga" in their essays. Of those, 9045 mention "wine", which is the worst of these keywords for predicting whether someone is female or not. It's not a perfect method, and as is, will strongly underpredict females, but with more keywords overall, as well as more targeted keywords, it could show real promise in accurately predicting gender by using only word queries. 
+
+```{r, echo=FALSE, fig.width=12, fig.height=6}
+#I know this can't possibly be the right way to do this, because it's so much work, but I want a probability table for possible combinations
+test <- data.frame(has_pilates = T, has_wine = T, has_yoga = T)
+test <- rbind(test, c(has_pilates = T, has_wine = F, has_yoga = T))
+test <-rbind(test, c(has_pilates = T, has_wine = T, has_yoga = F))
+test <-rbind(test, c(has_pilates = T, has_wine = F, has_yoga = F))
+test <-rbind(test, c(has_pilates = F, has_wine = T, has_yoga = T))
+test <-rbind(test, c(has_pilates = F, has_wine = F, has_yoga = T))
+test <-rbind(test, c(has_pilates = F, has_wine = T, has_yoga = F))
+test <-rbind(test, c(has_pilates = F, has_wine = F, has_yoga = F))
+
+prob_table <- predict(model_1, test, type="response")
+prob_table <- t(as.data.frame(t(prob_table)))
+prob_table <-round(prob_table,3) 
+
+colnames(prob_table) <- c("predicted probability of user being female")
+rownames(prob_table) <- c("wine, pilates, yoga", "pilates, yoga", "pilates, wine", "pilates", "wine, yoga", "yoga","wine","none")
+kable(prob_table,  align = 'c')
+
+```
+
+
 
 
 ### b)
@@ -64,8 +137,16 @@ Plot a histogram of the fitted probabilities $\widehat{p}_i$ for all users $i=1,
 
 ```{r, echo=FALSE, fig.width=12, fig.height=6}
 
+h <- ggplot(data = profiles, aes(x = fitted(model_1))) +
+  geom_histogram(binwidth = 0.1, fill="#CC79A7", col = "white" ) +
+  theme_bw()+
+  labs(title = "Fitted Probabilities", 
+       x = "Fitted Probability of Being Female", 
+       y = "User Count")
+h
 ```
 
+This histogram makes it fairly obvious that my model is not very effective at predicing gender with certainty, as the bulk of the predictions hover around the 40% line, the same line that we'd approach with a random coin flip. It could definitely be improved. 
 
 ### c)
 
@@ -161,9 +242,28 @@ comparing cheese and milk production in the US from 1930 to today. Comment on th
 * Milk [page](https://www.quandl.com/data/USDANASS/NASS_MILKPRODUCTIONMEASUREDINLB-Milk-Production-Measured-In-Lb)
 
 ```{r, echo=FALSE, fig.width=12, fig.height=6}
+Quandl.api_key("JnieHx8tQ9uysSKshoKQ")
 cheese <- Quandl("USDANASS/NASS_CHEESEPRODUCTIONMEASUREDINLB") %>% 
-  tbl_df()
+  tbl_df()%>% 
+  rename(Cheese = Value)
+
 milk <-  Quandl("USDANASS/NASS_MILKPRODUCTIONMEASUREDINLB") %>% 
-  tbl_df()
+  tbl_df() %>% 
+  rename(Milk = Value)
+
+dairy <- left_join(cheese, milk, by = "Date")
+
+dairy$Year <- year(dairy$Date)
+dairy <- filter(dairy, dairy$Year > 1929)
+
+p <- ggplot(dairy, aes(Date)) + 
+  geom_line(aes(y = Cheese , colour = "Cheese")) + 
+  geom_line(aes(y = Milk , colour = "Milk")) +
+  theme_bw()+
+  labs(title="Dairy Production in the US", x = "Year", y = "Value of Production") +
+  guides(colour=guide_legend(title="", reverse = T))
+p
+
 ```
 
+This graph shows several things. First, the value of dairy production has been on the rise in the US since the 30's. It seems to have really picked up after 1980. Second, it shows that the value of production for the cheese industry is significantly lower than that of the milk industry, and that they trend together. This makes perfect sense because the cheese industry is completely reliant on the milk industry, and accounts for a portion of it's production. 
